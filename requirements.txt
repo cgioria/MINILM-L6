@@ -1,0 +1,14 @@
+# Servidor API
+fastapi
+uvicorn[all]
+sentence-transformers
+torch
+PyPDF2
+
+# Cliente API
+requests
+
+# APIs (si las usas)
+openai
+google-generativeai
+python-dotenv
