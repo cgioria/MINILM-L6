@@ -37,7 +37,7 @@ python .\vectorizacion.py --embeddings sentence --chunked true --max-chunks 6
 python .\vectorizacion.py --embeddings openai --chunked true --max-chunks 5
 
 # Gemini embeddings (requires GEMINI_API_KEY in env)
-python .\vectorizacion.py --embeddings gemini --chunked true --max-chunks 10
+python .\vectorizacion.py --embeddings gemini --chunked true --max-chunks 5
 
 # Use local API server for embedding/compare
 python .\vectorizacion.py --embeddings api --chunked true --max-chunks 7

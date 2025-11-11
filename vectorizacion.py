@@ -35,7 +35,7 @@ def extract_text_from_pdf(pdf_path: str) -> str | None:
 def generate_openai_embeddings(texts: list[str], model_name: str) -> list[list[float]]:
     from openai import OpenAI
     from dotenv import load_dotenv
-    print(f"📐 Vectorizando texto usando la API de OpenAI con el modelo '{model_name}'...")
+    print(f"📐 Vectorizando {len(texts)} texto(s) usando la API de OpenAI con el modelo '{model_name}'...")
     try:
         load_dotenv()
         api_key = os.getenv("OPENAI_API_KEY")
@@ -52,15 +52,21 @@ def generate_openai_embeddings(texts: list[str], model_name: str) -> list[list[f
 def generate_gemini_embeddings(texts: list[str], model_name: str) -> list[list[float]]:
     import google.generativeai as genai
     from dotenv import load_dotenv
-    print(f"📐 Vectorizando texto usando la API de Gemini con el modelo '{model_name}'...")
+    print(f"📐 Vectorizando {len(texts)} texto(s) usando la API de Gemini con el modelo '{model_name}'...")
     try:
         load_dotenv()
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key: raise ValueError("GEMINI_API_KEY no encontrada.")
         genai.configure(api_key=api_key)
+        
         response = genai.embed_content(model=f"models/{model_name}", content=texts, task_type="retrieval_document")
-        print("✅ Vectorización con Gemini completada.")
-        return response['embedding']
+        
+        if 'embedding' in response:
+            print("✅ Vectorización con Gemini completada.")
+            return response['embedding']
+        else:
+            print(f"💥 Error inesperado en la respuesta de Gemini: {response}")
+            return None
     except Exception as e:
         print(f"💥 Error al generar embeddings con Gemini: {e}")
         return None
@@ -76,11 +82,11 @@ def evaluate_similarity_score(score: float) -> tuple[str, str]:
     elif score >= 0.20: return ("🟡 Coincidencia Baja", "El perfil tiene alguna relación, pero es probable que no sea el ideal.")
     else: return ("🔴 Muy Baja Coincidencia", "El perfil no es relevante para la búsqueda.")
 
-# --- FUNCIÓN UNIFICADA DE ANÁLISIS (SIN LÓGICA DE PALABRAS CLAVE) ---
-def analyze_pdf(pdf_path: str, search_query: str, query_embedding: torch.Tensor, model=None, embedding_method: str = "sentence", use_chunking: bool = False, max_chunks: int = 0):
+# --- FUNCIÓN UNIFICADA DE ANÁLISIS (CORREGIDA) ---
+def analyze_pdf(pdf_path: str, search_query: str, query_embedding: torch.Tensor, model=None, embedding_method: str = "sentence", use_chunking: bool = False, max_chunks: int = 0, model_name: str = None):
     """
     Analiza un PDF usando el método y estrategia de chunking especificados.
-    Devuelve únicamente el score de similitud.
+    Ahora recibe el model_name para usarlo con las APIs.
     """
     profile_text = extract_text_from_pdf(pdf_path)
     if not profile_text:
@@ -108,11 +114,22 @@ def analyze_pdf(pdf_path: str, search_query: str, query_embedding: torch.Tensor,
                 chunks = chunks[:max_chunks]
             if not chunks: return None
             
-            best_score = -1
-            # La lógica para OpenAI/Gemini con chunking se mantiene, pero usa el model_name definido en main()
-            # (Se omitió aquí para brevedad, pero sería igual que antes)
-            # ... (código de chunking para APIs) ...
-            score_value = best_score # Placeholder
+            best_score = -1.0
+            api_func = generate_openai_embeddings if embedding_method == 'openai' else generate_gemini_embeddings
+            
+            print(f"   📡 Analizando {len(chunks)} fragmentos con la API {embedding_method.title()}...")
+            for i, chunk in enumerate(chunks):
+                chunk_embedding_list = api_func([chunk], model_name)
+                
+                if chunk_embedding_list and len(chunk_embedding_list) > 0:
+                    chunk_embedding_tensor = torch.tensor(chunk_embedding_list[0])
+                    cosine_score = util.cos_sim(query_embedding, chunk_embedding_tensor)
+                    if cosine_score.item() > best_score:
+                        best_score = cosine_score.item()
+                else:
+                    print(f"   💥 No se pudo obtener el embedding para el fragmento {i+1}.")
+                    
+            score_value = best_score
 
         elif embedding_method == 'api':
             print("   📡 Enviando datos al servidor API para análisis por fragmentos...")
@@ -133,13 +150,13 @@ def analyze_pdf(pdf_path: str, search_query: str, query_embedding: torch.Tensor,
         if embedding_method == 'sentence':
             profile_embedding = generate_sentence_transformer_embeddings(profile_text, model)
         elif embedding_method == 'openai':
-            # La lógica para OpenAI se mantiene, pero usa el model_name definido en main()
-            # ... (código de OpenAI) ...
-            profile_embedding = torch.tensor([0.0]) # Placeholder
+            embeddings_list = generate_openai_embeddings([profile_text], model_name)
+            if not embeddings_list: return None
+            profile_embedding = torch.tensor(embeddings_list[0])
         elif embedding_method == 'gemini':
-            # La lógica para Gemini se mantiene, pero usa el model_name definido en main()
-            # ... (código de Gemini) ...
-            profile_embedding = torch.tensor([0.0]) # Placeholder
+            embeddings_list = generate_gemini_embeddings([profile_text], model_name)
+            if not embeddings_list: return None
+            profile_embedding = torch.tensor(embeddings_list[0])
         elif embedding_method == 'api':
             print("   📡 Enviando datos al servidor API...")
             try:
@@ -151,20 +168,15 @@ def analyze_pdf(pdf_path: str, search_query: str, query_embedding: torch.Tensor,
                 print("   ✅ Respuesta recibida del servidor.")
             except requests.exceptions.RequestException as e:
                 print(f"   💥 Error al conectar con la API: {e}")
-                return None, []
+                return None
         
         if embedding_method != 'api':
             cosine_score = util.cos_sim(profile_embedding, query_embedding)
             score_value = cosine_score.item()
-
-    # --- ELIMINADO: Lógica de búsqueda de palabras clave ---
-    # keywords = [kw.strip().lower() for kw in search_query.replace(',', ' ').replace('y ', ' ').split()]
-    # profile_text_lower = profile_text.lower()
-    # found_keywords = [kw for kw in keywords if kw in profile_text_lower]
     
-    return score_value # --- MODIFICADO: Ya no devuelve found_keywords ---
+    return score_value
 
-# --- FUNCIÓN PRINCIPAL (SIN LÓGICA DE PALABRAS CLAVE) ---
+# --- FUNCIÓN PRINCIPAL (CORREGIDA) ---
 def main():
     start_time_total = time.time()
 
@@ -184,16 +196,14 @@ def main():
     print(f"📁 Analizando PDFs en el directorio: '{PDF_DIR}'")
     print(f"🔍 Búsqueda: '{SEARCH_QUERY}'")
 
-    # Lógica para manejar el parámetro --model
     if embedding_method == 'api' and model_name_from_args:
         print("\n⚠️  ADVERTENCIA: El parámetro --model es ignorado cuando --embeddings es 'api'.")
         print("   El modelo utilizado será el que tenga cargado el servidor (api_server.py).")
         print("   Para cambiar el modelo en el servidor, reinícialo con el nuevo modelo o usa su endpoint /change_model/.")
-        final_model_name = None # No se usará
+        final_model_name = None
     elif model_name_from_args:
         final_model_name = model_name_from_args
     else:
-        # Asignar modelos por defecto si no se especificaron
         if embedding_method == 'sentence':
             final_model_name = 'hiiamsid/sentence_similarity_spanish_es'
         elif embedding_method == 'openai':
@@ -205,7 +215,6 @@ def main():
 
     if final_model_name:
         print(f"🧠 Modelo a utilizar: {final_model_name}")
-
 
     if not os.path.exists(PDF_DIR):
         print(f"Error: El directorio '{PDF_DIR}' no fue encontrado.")
@@ -255,8 +264,8 @@ def main():
         start_time_process = time.time()
         print(f"\n🔬 Procesando: {os.path.basename(pdf_path)}")
         
-        # --- MODIFICADO: La llamada ya no recibe found_keywords ---
-        score_value = analyze_pdf(pdf_path, SEARCH_QUERY, query_embedding, model, embedding_method, use_chunking, args.max_chunks)
+        # --- MODIFICADO: Se pasa final_model_name como argumento ---
+        score_value = analyze_pdf(pdf_path, SEARCH_QUERY, query_embedding, model, embedding_method, use_chunking, args.max_chunks, final_model_name)
 
         if score_value is not None:
             category, recommendation = evaluate_similarity_score(score_value)
@@ -265,7 +274,6 @@ def main():
                 'score': score_value,
                 'category': category,
                 'recommendation': recommendation
-                # --- ELIMINADO: 'found_keywords': found_keywords
             })
             
             end_time_process = time.time()
@@ -284,7 +292,6 @@ def main():
         print(f"📈 Porcentaje de Relevancia: {result['score']:.2%}")
         print(f"Categoría: {result['category']}")
         print(f"Recomendación: {result['recommendation']}")
-        # --- ELIMINADO: Línea que mostraba las palabras clave ---
     
     print("="*60)
 
