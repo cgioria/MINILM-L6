@@ -25,6 +25,9 @@ This project extracts text from PDF CVs, generates embeddings using different ba
 uvicorn api_server:app --reload
 # (optional) change model with cambiar_modelo.py
 python cambiar_modelo.py --model "hiiamsid/sentence_similarity_spanish_es"
+python cambiar_modelo.py --model "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+python cambiar_modelo.py --model "sentence-transformers/multi-qa-mpnet-base-dot-v1"
+
 ```
 
 2. Run `vectorizacion.py` (CLI) with different backends:
@@ -40,7 +43,7 @@ python .\vectorizacion.py --embeddings openai --chunked true --max-chunks 5
 python .\vectorizacion.py --embeddings gemini --chunked true --max-chunks 5
 
 # Use local API server for embedding/compare
-python .\vectorizacion.py --embeddings api --chunked true --max-chunks 7
+python .\vectorizacion.py --embeddings api --chunked true --max-chunks 5
 ```
 
 3. Client usage (`client_api.py`):
