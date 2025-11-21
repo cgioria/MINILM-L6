@@ -82,3 +82,49 @@ If you want, I can also:
 - Normalize similarity output across the codebase (so percentages are intuitive)
 - Add support for sending `cv_chunks` (with ids/offsets) from the client to the server for traceability
 - Implement sentence tokenization for chunking
+
+
+## Architecture
+
+Paso a paso (SentenceTransformer — local)
+
+1) Cargar modelo  
+- main(): model = SentenceTransformer(final_model_name)  
+- Resultado: objeto SentenceTransformer con tokenizer y encoder cargados.
+
+2) Vectorizar la query (consulta)  
+- generate_sentence_transformer_embeddings(SEARCH_QUERY, model) → model.encode(..., convert_to_tensor=True)  
+- Tipo/shape: torch.Tensor 1‑D: torch.Size([embedding_dim])
+
+3) Extraer texto del PDF  
+- extract_text_from_pdf(pdf_path) → devuelve string con todo el texto del CV.
+
+4) Decidir estrategia: chunking o documento completo  
+- Si use_chunking True: el código divide el texto por puntos (profile_text.split('.')) y filtra fragmentos cortos; aplica max_chunks.  
+- Si use_chunking False: trata el documento entero como un solo texto.
+
+5) Vectorizar textos del CV
+- Chunking:
+  - chunk_embeddings = model.encode(chunks, convert_to_tensor=True)  
+  - Resultado: torch.Tensor 2‑D con shape (n_chunks, embedding_dim).
+- Documento completo:
+  - profile_embedding = model.encode(profile_text, convert_to_tensor=True)  
+  - Resultado: torch.Tensor 1‑D (embedding_dim).
+
+6) Calcular similitud coseno
+- util.cos_sim(query_embedding, chunk_embeddings) → tensor shape (1, n) con scores en [-1, 1]  
+- Para documento completo: util.cos_sim(profile_embedding, query_embedding) → single value.  
+- Selección: score_value = cosine_scores.max().item() (mejor fragmento) o .item() para documento.
+
+7) Clasificar / formatear resultado
+- evaluate_similarity_score(score_value) → categoría y recomendación.  
+- En main imprime score y “Porcentaje de Relevancia” (actualmente formatea score directo; recomendable normalizar con (score+1)/2 si quieres 0→0% y 1→100%).
+
+Consideraciones técnicas importantes
+- Tipos: usa torch.Tensor (PyTorch). Para interoperar: tensor.cpu().numpy() o tf.convert_to_tensor(...).  
+- GPU: si mueves modelo a CUDA (model.to('cuda')) y las entradas también, encode y cos_sim serán acelerados.  
+- Tokenización: model.encode usa el tokenizer interno; para textos largos es mejor chunking token-aware (usar tokenizer.encode y dividir por ids).  
+- Batching: model.encode(todos_los_chunks, convert_to_tensor=True) es eficiente; evita llamar al modelo por chunk uno a uno.  
+- Dimensiones: siempre verificar query_embedding.shape[-1] == chunk_embeddings.shape[-1] antes de cos_sim.  
+- Normalización de scores: util.cos_sim devuelve [-1,1]; para mostrar porcentajes usar (score+1)/2.
+
